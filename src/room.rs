@@ -41,11 +41,11 @@ pub struct RoomInfo<T>{
     senders: HashMap<String, UnboundedSender<(String, Message)>>,
     users: Vec<User>,
     last_emiter: Option<EmisionKind>,
-    state: Option<T>,
+    state: T,
 }
 
 impl<T> RoomInfo< T>{
-    pub fn new(name: String, state: Option<T>) -> Arc<Mutex<Self>>{
+    pub fn new(name: String, state: T) -> Arc<Mutex<Self>>{
         Arc::new(Mutex::new(Self{
             name,
             connection_channel:unbounded_channel(),
@@ -107,14 +107,14 @@ impl<T> RoomInfo< T>{
 
     /////////////////////////////////////////////////////
 
-    pub fn get_state(&self) -> Option<&T> {
-         self.state.as_ref()
+    pub fn get_state(&self) -> &T{
+         &self.state
     }
 
     /////////////////////////////////////////////////////
 
-    pub fn get_mut_state(&mut self) -> Option<&mut T>{
-        self.state.as_mut()
+    pub fn get_mut_state(&mut self) -> &mut T{
+        &mut self.state
     }
 
     /////////////////////////////////////////////////////

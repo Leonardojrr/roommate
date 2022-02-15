@@ -43,7 +43,7 @@ macro_rules! room {
     ) =>{
             
                 let room_name = stringify!($room_name);
-                let room_instance: Arc<Mutex<RoomInfo<$state>>> = RoomInfo::new(String::from(room_name), Some($state_init));
+                let room_instance: Arc<Mutex<RoomInfo<$state>>> = RoomInfo::new(String::from(room_name), $state_init);
                 let mut $room_name = Room::new(&room_instance);
             {
                 $(
@@ -70,7 +70,7 @@ macro_rules! room {
     ) =>{
 
                 let room_name = stringify!($room_name);
-                let room_instance: Arc<Mutex<RoomInfo<EmptyState>>> = RoomInfo::new(String::from(room_name), None);
+                let room_instance: Arc<Mutex<RoomInfo<EmptyState>>> = RoomInfo::new(String::from(room_name), EmptyState);
                 let mut $room_name = Room::new(&room_instance);
 
                 {
@@ -89,7 +89,5 @@ macro_rules! room {
                         $room_name.insert_event(stringify!($event_name), event_wrapper);
                     )*
                 }
-
-            
     }
 }
