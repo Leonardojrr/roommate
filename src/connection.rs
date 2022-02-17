@@ -57,36 +57,54 @@ impl User {
 }
 
 
-pub struct SocketListener{
-    pub socket: TcpListener,
+pub struct SocketListener<'a>{
+    pub addr: &'a str,
     pub room_channels: HashMap<String, UnboundedSender<User>>
 }
 
-impl SocketListener{
+impl<'a> SocketListener<'a>{
 
-    fn connect_user(&self, room: String, user: User){
-        let _ = self.room_channels.get(&room).unwrap().send(user);
+    pub fn new(addr: &'a str, room_channels: HashMap<String, UnboundedSender<User>>) -> Self{
+        Self{
+            addr,
+            room_channels
+        }
     }
 
+    
+    pub fn connect_room(&mut self, room: String, room_channel: UnboundedSender<User>){
+        self.room_channels.insert(room, room_channel);
+    }
+    
+    fn send_user(&self, room: String, user: User){
+        let _ = self.room_channels.get(&room).unwrap().send(user);
+    }
+    
     pub async fn listen(&self){
 
+        println!("Listening for connections");
+
+        let connection_listener = TcpListener::bind(self.addr).await.unwrap();
+
         loop{
-            let mut room_to_conect = String::new();
+            let mut room_to_connect = String::new();
 
             let mut callback = |req: &Request, resp: Response|{
     
                 let query = req.uri().query().unwrap();
-                room_to_conect = query.split('=').collect::<Vec<&str>>()[1].to_owned();
+                room_to_connect = query.split('=').collect::<Vec<&str>>()[1].to_owned();
     
                 Ok(resp)
             };
 
-            let (stream, _) = self.socket.accept().await.unwrap();
+            
+
+            let (stream, _) = connection_listener.accept().await.unwrap();
 
             let ws = accept_hdr_async(stream, &mut callback).await.unwrap();
             let user = User::new(ws);
 
-            self.connect_user(room_to_conect, user);
+            self.send_user(room_to_connect, user);
         } 
     }
 }

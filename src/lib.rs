@@ -5,31 +5,18 @@ pub mod prelude;
 
 #[macro_export]
 macro_rules! run_server{
-    ($port:expr, $($room:ident =>[$($room_to_connect:ident),*]),*)=>{
+    ($port:expr, $($tokens:tt)+)=>{
+            let room_channels = HashMap::new();
+            let mut socket = SocketListener::new($port, room_channels);
 
-        {
-            let socket = tokio::net::TcpListener::bind($port).await.unwrap();
-            let mut room_channels = HashMap::new();
+            let mut handlers_list = router!(socket, $($tokens)+);
+            let handler = tokio::spawn(async move {socket.listen().await});
 
-            $(
-               let room_ref = $room.room.lock().await;
-               room_channels.insert(room_ref.name(), room_ref.conn_channel());
-               drop(room_ref);
-            )*
+            handlers_list.push(handler);
 
-            let ws_socket = SocketListener{socket, room_channels};
-
-            $(
-                let mut room_ref = $room.room.lock().await;
-                $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
-                drop(room_ref);
-            )*
-
-            (
-                tokio::spawn(async move {ws_socket.listen().await})
-                $(,tokio::spawn(async move {$room.run().await}))*
-            )
-        }
+            for handler in handlers_list{
+                handler.await;
+            }
     };
 }
 
@@ -91,4 +78,72 @@ macro_rules! room {
                     )*
                 }
     }
+}
+
+#[macro_export]
+macro_rules! router{
+
+    ($socket_listener:ident, $room_ident:ident => [$($room_to_connect:ident),*], $($tokens:tt)+)=>{
+
+        {
+            let mut room_ref = $room_ident.room.lock().await;
+    
+            $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
+            $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
+    
+            drop(room_ref);
+    
+            let mut handlers_list = router!($socket_listener, $($tokens)+);
+            let handler = tokio::spawn(async move {$room_ident.run().await});
+
+            handlers_list.push(handler);
+
+            handlers_list
+        }
+    };
+
+    ($socket_listener:ident, $room_ident:ident, $($tokens:tt)+)=>{
+
+        {
+            let mut room_ref = $room_ident.room.lock().await;
+    
+            $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
+    
+            drop(room_ref);
+    
+            let mut handlers_list = router!($socket_listener, $($tokens)+);
+            let handler = tokio::spawn(async move {$room_ident.run().await});
+
+            handlers_list.push(handler);
+
+            handlers_list
+        }
+    };
+
+    ($socket_listener:ident, $room_ident:ident => [$($room_to_connect:ident),*]) =>{
+
+        {
+            let mut room_ref = $room_ident.room.lock().await;
+            
+            $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
+            $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
+            
+            drop(room_ref);
+             
+            vec![tokio::spawn(async move {$room_ident.run().await})]
+        }
+    };
+
+    ($socket_listener:ident, $room_ident:ident)=>{
+
+        {
+            let mut room_ref = $room_ident.room.lock().await;
+    
+            $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
+    
+            drop(room_ref);
+
+            vec![tokio::spawn(async move {$room_ident.run().await})]
+        }
+    };
 }

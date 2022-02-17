@@ -322,6 +322,8 @@ impl <'a, T> Room <'a, T>{
 
     pub async fn run(&mut self){
 
+        println!("xd");
+
         loop{
             let mut room_ref = self.room.lock().await;
             let received_emission = room_ref.listen_events().await;
