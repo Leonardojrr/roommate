@@ -1,6 +1,7 @@
 mod room;
 mod callback;
 mod connection;
+mod error;
 pub mod prelude;
 
 #[macro_export]

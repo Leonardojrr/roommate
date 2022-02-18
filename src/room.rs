@@ -1,5 +1,6 @@
 use crate::connection::User;
 use crate::callback::Callback;
+use crate::error::ErrorKind;
 use futures_util::{select, 
     future::{
         join_all, 
@@ -136,6 +137,13 @@ impl<T> RoomInfo< T>{
 
     /////////////////////////////////////////////////////
 
+    async fn disconnect_user(&mut self, index: usize){
+        let user = self.users.remove(index);
+        user.close_connection().await;
+    }
+
+    /////////////////////////////////////////////////////
+
     fn change_emiter(&mut self, emiter: EmisionKind){
         self.last_emiter = Some(emiter);
     }
@@ -268,7 +276,7 @@ impl<T> RoomInfo< T>{
 
     /////////////////////////////////////////////////////
 
-    async fn listen_events(&mut self) -> Result<(Option<tungstenite::Message>, EmisionKind), tungstenite::Error>{
+    async fn listen_events(&mut self) -> Result<(Option<tungstenite::Message>, EmisionKind), ErrorKind>{
 
        let mut users_listener = vec![];
        for user in &mut self.users{
@@ -283,7 +291,19 @@ impl<T> RoomInfo< T>{
                 // Listen for user messages
             (msg, user_index, _) = select_all(users_listener).fuse() =>{
     
-                let message = msg.unwrap()?;
+                let message = match msg{
+                    Some(m) =>{
+                        match m{
+                            Ok(message) => message,
+                            Err(err) => {return Err(ErrorKind::Msg(err));}
+                        }
+                    }
+
+                    None => {return Err(ErrorKind::Connection(user_index));}
+                 };
+
+
+
                 return Ok((Some(message) ,EmisionKind::User(user_index)))
             },
     
@@ -427,7 +447,20 @@ impl <'a, T> Room <'a, T>{
                     }
                 },
 
-                Err(_) =>{}
+                Err(err) =>{
+
+                    match err {
+                        ErrorKind::Connection(index) =>{
+                            let mut room_ref  = self.room.lock().await;
+                            room_ref.disconnect_user(index).await;
+                            drop(room_ref);
+                        },
+    
+                        ErrorKind::Msg(_)=>{
+    
+                        }
+                    }
+                }
             }
 
         }

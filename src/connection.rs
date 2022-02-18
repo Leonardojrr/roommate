@@ -54,6 +54,17 @@ impl User {
     pub fn send(&mut self, msg: tungstenite::Message) -> Send<Sender, tungstenite::Message>{
         self.sender.send(msg)
     }
+
+    pub async fn close_connection(self){
+
+        let (receiver, sender) = (self.receiver, self.sender);
+        let mut ws = receiver.reunite(sender).unwrap();
+        
+        match ws.close(None).await{
+            Ok(_) =>{},
+            Err(_) =>{}
+        }
+    }
 }
 
 
