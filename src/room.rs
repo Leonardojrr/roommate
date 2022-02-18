@@ -26,6 +26,41 @@ use serde_json::{
     Value
 };
 
+
+#[macro_export]
+macro_rules! room {
+    (   
+        $room_name:ident<$state:tt>{
+            $state_init:expr,
+            $($tokens:tt)+
+        }
+    ) =>{
+            
+                let room_name = stringify!($room_name);
+                let room_instance: Arc<Mutex<RoomInfo<$state>>> = RoomInfo::new(String::from(room_name), $state_init);
+                let mut $room_name = Room::new(&room_instance);
+
+                {
+                    callback!($room_name, $state, $($tokens)+);
+                }
+    };
+
+    (   
+        $room_name:ident{
+            $($tokens:tt)+
+        }
+    ) =>{
+
+                let room_name = stringify!($room_name);
+                let room_instance: Arc<Mutex<RoomInfo<EmptyState>>> = RoomInfo::new(String::from(room_name), EmptyState);
+                let mut $room_name = Room::new(&room_instance);
+
+                {
+                    callback!($room_name, EmptyState, $($tokens)+);
+                }
+    }
+}
+
 pub enum EmisionKind{
     Room(String),
     User(usize),
@@ -321,8 +356,6 @@ impl <'a, T> Room <'a, T>{
     }
 
     pub async fn run(&mut self){
-
-        println!("xd");
 
         loop{
             let mut room_ref = self.room.lock().await;

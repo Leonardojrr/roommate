@@ -1,8 +1,102 @@
 use crate::room;
-
 use room::RoomInfo;
 use std::{sync::Arc,future::Future,pin::Pin,task::{Context,Poll}};
 use tokio::sync::Mutex;
+
+#[macro_export]
+macro_rules! callback {
+
+    ($room_name:ident, $state:tt, #[$parse_type:ty] $event_name:tt => $room:ident, $data:ident $event_block:block, $($tokens:tt)+) => {
+        
+            fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
+                let future = async move{
+                    match des::<$parse_type>(&data){
+                        Ok(des_string) =>{
+                            let mut $room = room.lock().await;
+                            let $data = des_string;
+                            $event_block;
+                        },
+
+                        Err(_) =>{
+                            let mut $room = room.lock().await;
+                            let $data = data;
+                            $event_block;
+                        }
+
+                    };
+                };
+
+                CallbackFut{fut: Box::pin(future)}
+            }
+
+            let event_wrapper = $event_name;
+            $room_name.insert_event(stringify!($event_name), event_wrapper);
+        
+
+        callback!($room_name, $state, $($tokens)+);
+    };
+
+    ($room_name:ident, $state:tt, $event_name:tt => $room:ident, $data:ident $event_block:block, $($tokens:tt)+) => {
+
+        fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
+            let future = async move{
+                let mut $room = room.lock().await;
+                let $data = data;
+                $event_block;
+            };
+
+            CallbackFut{fut: Box::pin(future)}
+        }
+
+        let event_wrapper = $event_name;
+        $room_name.insert_event(stringify!($event_name), event_wrapper);
+    
+        callback!($room_name, $state, $($tokens)+);
+    };
+
+    ($room_name:ident, $state:tt, #[$parse_type:ty] $event_name:tt => $room:ident, $data:ident $event_block:block) => {
+
+        fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
+            let future = async move{
+                match des::<$parse_type>(&data){
+                    Ok(des_string) =>{
+                        let mut $room = room.lock().await;
+                        let $data = des_string;
+                        $event_block;
+                    },
+
+                    Err(_) =>{
+                        let mut $room = room.lock().await;
+                        let $data = data;
+                        $event_block;
+                    }
+
+                };
+            };
+
+            CallbackFut{fut: Box::pin(future)}
+        }
+
+        let event_wrapper = $event_name;
+        $room_name.insert_event(stringify!($event_name), event_wrapper);
+    };
+
+    ($room_name:ident, $state:tt, $event_name:tt => $room:ident, $data:ident $event_block:block) => {
+
+        fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
+            let future = async move{
+                let mut $room = room.lock().await;
+                let $data = data;
+                $event_block;
+            };
+
+            CallbackFut{fut: Box::pin(future)}
+        }
+
+        let event_wrapper = $event_name;
+        $room_name.insert_event(stringify!($event_name), event_wrapper);
+    };
+}
 
 pub type Callback<T> = fn(Arc<Mutex<RoomInfo<T>>>, String) -> CallbackFut;
 

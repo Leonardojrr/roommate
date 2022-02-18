@@ -82,8 +82,6 @@ impl<'a> SocketListener<'a>{
     
     pub async fn listen(&self){
 
-        println!("Listening for connections");
-
         let connection_listener = TcpListener::bind(self.addr).await.unwrap();
 
         loop{

@@ -15,69 +15,9 @@ macro_rules! run_server{
             handlers_list.push(handler);
 
             for handler in handlers_list{
-                handler.await;
+               let _ = handler.await;
             }
     };
-}
-
-
-#[macro_export]
-macro_rules! room {
-    (   
-        $room_name:ident<$state:tt>{
-            $state_init:expr,
-            $($event_name:tt => $room:ident, $data:ident $event_block:block), *
-        }
-    ) =>{
-            
-                let room_name = stringify!($room_name);
-                let room_instance: Arc<Mutex<RoomInfo<$state>>> = RoomInfo::new(String::from(room_name), $state_init);
-                let mut $room_name = Room::new(&room_instance);
-            {
-                $(
-                    fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
-                        let future = async move{
-                            let mut $room = room.lock().await;
-                            let $data = data;
-                            $event_block;
-                        };
-
-                        CallbackFut{fut: Box::pin(future)}
-                    }
-
-                    let event_wrapper = $event_name;
-                    $room_name.insert_event(stringify!($event_name), event_wrapper);
-                )*
-            }
-    };
-
-    (   
-        $room_name:ident{
-            $($event_name:tt => $room:ident, $data:ident $event_block:block), *
-        }
-    ) =>{
-
-                let room_name = stringify!($room_name);
-                let room_instance: Arc<Mutex<RoomInfo<EmptyState>>> = RoomInfo::new(String::from(room_name), EmptyState);
-                let mut $room_name = Room::new(&room_instance);
-
-                {
-                    $(
-                        fn $event_name(room: Arc<Mutex<RoomInfo<EmptyState>>>, data:String) -> CallbackFut  {
-                            let future = async move{
-                                let mut $room = room.lock().await;
-                                let $data = data;
-                                $event_block;
-                            };
-    
-                            CallbackFut{fut: Box::pin(future)}
-                        }
-    
-                        let event_wrapper = $event_name;
-                        $room_name.insert_event(stringify!($event_name), event_wrapper);
-                    )*
-                }
-    }
 }
 
 #[macro_export]
