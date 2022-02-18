@@ -59,7 +59,7 @@ impl User {
 
         let (receiver, sender) = (self.receiver, self.sender);
         let mut ws = receiver.reunite(sender).unwrap();
-        
+
         match ws.close(None).await{
             Ok(_) =>{},
             Err(_) =>{}
@@ -88,7 +88,13 @@ impl<'a> SocketListener<'a>{
     }
     
     fn send_user(&self, room: String, user: User){
-        let _ = self.room_channels.get(&room).unwrap().send(user);
+        match self.room_channels.get(&room){
+            Some(room_channel) =>{
+                let _ = room_channel.send(user);
+            },
+
+            None =>{}
+        }
     }
     
     pub async fn listen(&self){
