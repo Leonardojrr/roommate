@@ -1,6 +1,6 @@
 use tungstenite::Error;
 
-pub enum ErrorKind{
+pub enum ErrorKind {
     Msg(Error),
-    Connection(usize)
+    Connection(usize),
 }

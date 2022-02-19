@@ -1,8 +1,8 @@
-mod room;
 mod callback;
 mod connection;
 mod error;
 pub mod prelude;
+mod room;
 
 #[macro_export]
 macro_rules! run_server{
@@ -28,12 +28,12 @@ macro_rules! router{
 
         {
             let mut room_ref = $room_ident.room.lock().await;
-    
+
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
             $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
-    
+
             drop(room_ref);
-    
+
             let mut handlers_list = router!($socket_listener, $($tokens)+);
             let handler = tokio::spawn(async move {$room_ident.run().await});
 
@@ -47,11 +47,11 @@ macro_rules! router{
 
         {
             let mut room_ref = $room_ident.room.lock().await;
-    
+
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
-    
+
             drop(room_ref);
-    
+
             let mut handlers_list = router!($socket_listener, $($tokens)+);
             let handler = tokio::spawn(async move {$room_ident.run().await});
 
@@ -65,12 +65,12 @@ macro_rules! router{
 
         {
             let mut room_ref = $room_ident.room.lock().await;
-            
+
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
             $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
-            
+
             drop(room_ref);
-             
+
             vec![tokio::spawn(async move {$room_ident.run().await})]
         }
     };
@@ -79,9 +79,9 @@ macro_rules! router{
 
         {
             let mut room_ref = $room_ident.room.lock().await;
-    
+
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
-    
+
             drop(room_ref);
 
             vec![tokio::spawn(async move {$room_ident.run().await})]
