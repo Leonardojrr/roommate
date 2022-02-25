@@ -90,10 +90,16 @@ impl<'a> SocketListener<'a> {
 
             let (stream, _) = connection_listener.accept().await.unwrap();
 
-            let ws = accept_hdr_async(stream, &mut callback).await.unwrap();
-            let user = User::new(ws);
+            let result = accept_hdr_async(stream, &mut callback).await;
 
-            self.send_user(room_to_connect, user);
+            match result {
+                Ok(ws) => {
+                    let user = User::new(ws);
+                    self.send_user(room_to_connect, user);
+                }
+
+                Err(_) => {}
+            }
         }
     }
 }

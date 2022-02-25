@@ -15,20 +15,9 @@ macro_rules! callback {
 
             fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
                 let future = async move{
-                    match des::<$parse_type>(&data){
-                        Ok(des_string) =>{
-                            let mut $room = room.lock().await;
-                            let $data = des_string;
-                            $event_block;
-                        },
-
-                        Err(_) =>{
-                            let mut $room = room.lock().await;
-                            let $data = data;
-                            $event_block;
-                        }
-
-                    };
+                    let mut $room = room.lock().await;
+                    let $data = des::<$parse_type>(&data);
+                    $event_block;
                 };
 
                 CallbackFut{fut: Box::pin(future)}
@@ -63,20 +52,9 @@ macro_rules! callback {
 
         fn $event_name(room: Arc<Mutex<RoomInfo<$state>>>, data:String) -> CallbackFut  {
             let future = async move{
-                match des::<$parse_type>(&data){
-                    Ok(des_string) =>{
-                        let mut $room = room.lock().await;
-                        let $data = des_string;
-                        $event_block;
-                    },
-
-                    Err(_) =>{
-                        let mut $room = room.lock().await;
-                        let $data = data;
-                        $event_block;
-                    }
-
-                };
+                    let mut $room = room.lock().await;
+                    let $data = des::<$parse_type>(&data);
+                    $event_block;
             };
 
             CallbackFut{fut: Box::pin(future)}
