@@ -1,12 +1,17 @@
-mod callback;
 mod connection;
-mod error;
+mod controller;
+mod event;
 pub mod prelude;
 mod room;
+
+// new
+mod command;
+mod user;
 
 #[macro_export]
 macro_rules! run_server{
     ($port:expr, $($tokens:tt)+)=>{
+        {
             let room_channels = HashMap::new();
             let mut socket = SocketListener::new($port, room_channels);
 
@@ -15,9 +20,12 @@ macro_rules! run_server{
 
             handlers_list.push(handler);
 
-            for handler in handlers_list{
-               let _ = handler.await;
-            }
+            tokio::spawn(async move{
+                for handler in handlers_list{
+                    let _ = handler.await;
+                 }
+            })
+        }
     };
 }
 
@@ -27,10 +35,10 @@ macro_rules! router{
     ($socket_listener:ident, $room_ident:ident => [$($room_to_connect:ident),*], $($tokens:tt)+)=>{
 
         {
-            let mut room_ref = $room_ident.room.lock().await;
+            let mut room_ref = $room_ident.ctx.lock().await;
 
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
-            $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
+            $(room_ref.connect_room($room_to_connect.ctx.clone()).await;)*
 
             drop(room_ref);
 
@@ -46,7 +54,7 @@ macro_rules! router{
     ($socket_listener:ident, $room_ident:ident, $($tokens:tt)+)=>{
 
         {
-            let mut room_ref = $room_ident.room.lock().await;
+            let mut room_ref = $room_ident.ctx.lock().await;
 
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
 
@@ -64,10 +72,10 @@ macro_rules! router{
     ($socket_listener:ident, $room_ident:ident => [$($room_to_connect:ident),*]) =>{
 
         {
-            let mut room_ref = $room_ident.room.lock().await;
+            let mut room_ref = $room_ident.lock().await;
 
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
-            $(room_ref.connect_room($room_to_connect.room.clone()).await;)*
+            $(room_ref.connect_room($room_to_connect.ctx.clone()).await;)*
 
             drop(room_ref);
 
@@ -78,7 +86,7 @@ macro_rules! router{
     ($socket_listener:ident, $room_ident:ident)=>{
 
         {
-            let mut room_ref = $room_ident.room.lock().await;
+            let mut room_ref = $room_ident.ctx().await;
 
             $socket_listener.connect_room(room_ref.name(), room_ref.conn_channel());
 

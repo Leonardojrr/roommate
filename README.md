@@ -1,7 +1,7 @@
 # Motivation
-I started this project to create a library in rust to make bidirectional servers using webscokets. Keep in mind this library I made it in a way that would be very easy to start and create a server with the help of rust macros. My main goal was productivity and the easynest to work with this library.
+I started this project to create a library in rust to make bidirectional servers using webscokets. Keep in mind this library I made it in a way that would be very easy to start and create a server with the help of rust macros. My main goal was productivity and the easynest to work with this library. A popular library made in javascript I took as a reference is [socket.io](https://socket.io/).
 
-**_Note:_** I do not recommend to use this library for a production product until the performance of this one would be tested properly by side non critical projects.
+***Note:*** I do not recommend to use this library for a production product until the performance of this one would be tested properly by side non critical projects.
 
 # Example
 
@@ -33,4 +33,9 @@ async fn main(){
 }
 ```
 
-**_Note:_** To see this example more in depth you can go to [this repository](https://github.com/Leonardojrr/Chat-app).
+***Note:*** To see this example more in depth you can go to [this repository](https://github.com/Leonardojrr/Chat-app).
+
+---
+
+
+### If you want to collaborate to this project, please feel free to write a message or to send me a pull request

@@ -1,108 +1,81 @@
-use crate::callback::Callback;
-use crate::connection::User;
-use crate::error::ErrorKind;
-use futures_util::{
-    future::{join_all, select_all},
-    select, FutureExt,
-};
+use crate::{command, event::Callback};
+use futures_util::future::join_all;
 use serde::Serialize;
-use serde_json::{self, json, Value};
+use serde_json::{self, json};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Mutex,
+use tokio::{
+    sync::{
+        mpsc::{UnboundedReceiver, UnboundedSender},
+        RwLock,
+    },
+    task::JoinHandle,
 };
-use tungstenite::Message;
+use uuid::Uuid;
 
 #[macro_export]
 macro_rules! room {
     (
-        $room_name:ident<$state:tt>{
+
+        $room_name:ident <$state:tt>{
             $state_init:expr,
             $($tokens:tt)+
         }
     ) =>{
 
-                let room_name = stringify!($room_name);
-                let room_instance: Arc<Mutex<RoomInfo<$state>>> = RoomInfo::new(String::from(room_name), $state_init);
-                let mut $room_name = Room::new(&room_instance);
+        {
+            let room_name = stringify!($room_name);
+            let ctx: Arc<Mutex<Context<$state>>> = Context::new(String::from(room_name), $state_init);
+            let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel::<bool>(1);
 
-                {
-                    callback!($room_name, $state, $($tokens)+);
-                }
+
+            let mut room = Room::new(ctx.clone(), signal_receiver);
+
+            callback!(room, $state, $($tokens)+);
+        }
     };
 
     (
-        $room_name:ident{
+        $room_name:ident
+        {
             $($tokens:tt)+
         }
     ) =>{
 
-                let room_name = stringify!($room_name);
-                let room_instance: Arc<Mutex<RoomInfo<EmptyState>>> = RoomInfo::new(String::from(room_name), EmptyState);
-                let mut $room_name = Room::new(&room_instance);
+        {
+            let room_name = stringify!($room_name);
+            let ctx: Arc<Mutex<Context<EmptyState>>> = Context::new(String::from(room_name), EmptyState);
+            let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel::<bool>(1);
 
-                {
-                    callback!($room_name, EmptyState, $($tokens)+);
-                }
+            let mut room = Room::new(ctx, signal_receiver);
+
+            callback!(room, EmptyState, $($tokens)+);
+        }
     }
 }
 
-pub enum EmisionKind {
-    Room(String),
-    User(usize),
-    Connection(User),
-}
-
-pub struct EmptyState;
-
-pub struct RoomInfo<T> {
+pub struct Context<T> {
     name: String,
-    connection_channel: (UnboundedSender<User>, UnboundedReceiver<User>),
-    channel: (
-        UnboundedSender<(String, Message)>,
-        UnboundedReceiver<(String, Message)>,
-    ),
-    senders: HashMap<String, UnboundedSender<(String, Message)>>,
-    users: Vec<User>,
-    last_emiter: Option<EmisionKind>,
-    state: T,
+    state: Option<Arc<RwLock<T>>>,
+    emiter: Option<command::Emiter>,
+    user_senders: HashMap<Uuid, UnboundedSender<command::User>>,
+    room_senders: HashMap<String, UnboundedSender<command::Room>>,
+    sender: UnboundedSender<command::Room>,
 }
 
-impl<T> RoomInfo<T> {
-    pub fn new(name: String, state: T) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
-            name,
-            connection_channel: unbounded_channel(),
-            channel: unbounded_channel(),
-            senders: HashMap::new(),
-            users: Vec::new(),
-            last_emiter: None,
+impl<T> Context<T> {
+    pub fn new(
+        name: String,
+        state: T,
+        sender: UnboundedSender<command::Room>,
+    ) -> Arc<RwLock<Self>> {
+        Arc::new(RwLock::new(Self {
             state,
+            name,
+            emiter: None,
+            user_senders: HashMap::new(),
+            room_senders: HashMap::new(),
+            sender,
         }))
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub fn conn_channel(&self) -> UnboundedSender<User> {
-        self.connection_channel.0.clone()
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub fn room_channel(&self) -> UnboundedSender<(String, Message)> {
-        self.channel.0.clone()
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub async fn connect_room<State>(&mut self, room: Arc<Mutex<RoomInfo<State>>>) {
-        let room_ref = room.lock().await;
-
-        let sender = room_ref.room_channel();
-        let room_name = room_ref.name();
-
-        self.senders.insert(room_name, sender);
     }
 
     /////////////////////////////////////////////////////
@@ -113,27 +86,43 @@ impl<T> RoomInfo<T> {
 
     /////////////////////////////////////////////////////
 
+    pub fn room_channel(&self) -> UnboundedSender<command::Room> {
+        self.sender.clone()
+    }
+
+    /////////////////////////////////////////////////////
+
+    pub async fn connect_room<State>(&mut self, room: Arc<RwLock<Context<State>>>) {
+        let room_ref = room.read().await;
+
+        let sender = room_ref.room_channel();
+        let room_name = room_ref.name();
+
+        self.room_senders.insert(room_name, sender);
+    }
+
+    /////////////////////////////////////////////////////
+
     fn last_emiter(&mut self) -> Option<EmisionKind> {
         self.last_emiter.take()
     }
 
     /////////////////////////////////////////////////////
 
-    fn connect_user(&mut self, user: User) {
-        self.users.push(user);
-    }
-
-    /////////////////////////////////////////////////////
-
-    async fn disconnect_user(&mut self, index: usize) {
-        let user = self.users.remove(index);
-        user.close_connection().await;
-    }
-
-    /////////////////////////////////////////////////////
-
     fn change_emiter(&mut self, emiter: EmisionKind) {
         self.last_emiter = Some(emiter);
+    }
+
+    /////////////////////////////////////////////////////
+
+    fn connect_user(&mut self, user_id: Uuid, sender: UnboundedSender<command::User>) {
+        self.user_senders.insert(user_id, sender);
+    }
+
+    /////////////////////////////////////////////////////
+
+    async fn disconnect_user(&mut self, user_id: Uuid) {
+        self.user_senders.remove(&user_id);
     }
 
     /////////////////////////////////////////////////////
@@ -255,85 +244,20 @@ impl<T> RoomInfo<T> {
             _ => {}
         }
     }
-
-    /////////////////////////////////////////////////////
-
-    async fn listen_events(
-        &mut self,
-    ) -> Result<(Option<tungstenite::Message>, EmisionKind), ErrorKind> {
-        let mut users_listener = vec![];
-        for user in &mut self.users {
-            users_listener.push(user.listen());
-        }
-
-        let rooms_channel_listener = self.channel.1.recv();
-        let connection_channel_listener = self.connection_channel.1.recv();
-
-        if users_listener.len() > 0 {
-            select! {
-                // Listen for user messages
-            (msg, user_index, _) = select_all(users_listener).fuse() =>{
-
-                let message = match msg{
-                    Some(m) =>{
-                        match m{
-                            Ok(message) => message,
-                            Err(err) => {return Err(ErrorKind::Msg(err));}
-                        }
-                    }
-
-                    None => {return Err(ErrorKind::Connection(user_index));}
-                 };
-
-
-
-                return Ok((Some(message) ,EmisionKind::User(user_index)))
-            },
-
-                // Listen for others rooms messages
-            room_msg = rooms_channel_listener.fuse() =>{
-
-                let (room_name, msg) = room_msg.unwrap();
-
-                return Ok((Some(msg), EmisionKind::Room(room_name)))
-            }
-
-                // Listen for connections
-            user = connection_channel_listener.fuse() =>{
-                return  Ok((None, EmisionKind::Connection(user.unwrap())))
-            }
-            };
-        } else {
-            select! {
-                // Listen for others rooms messages
-            room_msg = rooms_channel_listener.fuse() =>{
-
-                let (room_name, msg) = room_msg.unwrap();
-
-                return Ok((Some(msg), EmisionKind::Room(room_name)))
-            }
-
-                // Listen for connections
-            user = connection_channel_listener.fuse() =>{
-                return  Ok((None, EmisionKind::Connection(user.unwrap())))
-            }
-            };
-        }
-    }
 }
 
-pub struct Room<'a, T> {
-    pub room: Arc<Mutex<RoomInfo<T>>>,
+pub struct Room<'a, T: Send + Sync> {
+    ctx: Arc<RwLock<Context<T>>>,
     event_list: HashMap<&'a str, Callback<T>>,
+    receiver: UnboundedReceiver<command::Room>,
 }
 
-impl<'a, T> Room<'a, T> {
-    pub fn new(room_ref: &Arc<Mutex<RoomInfo<T>>>) -> Self {
-        let room = Arc::clone(room_ref);
-
+impl<'a, T: Send + Sync> Room<'a, T> {
+    pub fn new(ctx: Arc<RwLock<Context<T>>>, receiver: UnboundedReceiver<command::Room>) -> Self {
         Self {
-            room,
+            ctx,
             event_list: HashMap::new(),
+            receiver,
         }
     }
 
@@ -341,87 +265,44 @@ impl<'a, T> Room<'a, T> {
         self.event_list.insert(event_name, event);
     }
 
-    async fn call(&mut self, event_name: String, data: String) {
-        let event_option = self.event_list.get_mut(event_name.as_str());
+    async fn call(&self, event_name: String, data: String) {
+        let event_option = self.event_list.get(event_name.as_str());
 
         match event_option {
             Some(event_function) => {
-                event_function(Arc::clone(&self.room), data).await;
+                event_function(Arc::clone(&self.ctx), data).await;
             }
 
             None => { /*panic!("The Event({}) doesn't exist",event_name)*/ }
         }
     }
 
-    pub async fn run(&mut self) {
-        loop {
-            let mut room_ref = self.room.lock().await;
-            let received_emission = room_ref.listen_events().await;
-            drop(room_ref);
+    pub fn run(mut self) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                let room_command = self
+                    .receiver
+                    .recv()
+                    .await
+                    .expect("There is no more connections to this room");
 
-            match received_emission {
-                Ok(emision) => {
-                    match emision {
-                        (_, EmisionKind::Connection(user)) => {
-                            let mut room_ref = self.room.lock().await;
-                            room_ref.connect_user(user);
-                            drop(room_ref);
-                        }
+                match room_command {
+                    command::Room::Event(event_name, data, emiter) => {}
 
-                        (Some(msg), emision_type) => {
-                            let mut room_ref = self.room.lock().await;
-                            room_ref.change_emiter(emision_type);
-                            drop(room_ref);
-
-                            match msg {
-                                Message::Text(string) => {
-                                    let ser_result = serde_json::from_str::<Value>(string.as_str());
-
-                                    if let Ok(ser_msg) = ser_result {
-                                        let (event_name, data) = {
-                                            let mut event = String::new();
-
-                                            if let Value::String(event_name) = &ser_msg["event"] {
-                                                event = event_name.clone();
-                                            }
-
-                                            let data = (&ser_msg["data"].to_string()).clone();
-
-                                            (event, data)
-                                        };
-
-                                        self.call(event_name, data).await;
-                                    }
-                                }
-
-                                // unimplemented
-                                Message::Binary(_) => {}
-
-                                // unimplemented
-                                Message::Ping(_) => {}
-
-                                // unimplemented
-                                Message::Pong(_) => {}
-
-                                // unimplemented
-                                Message::Close(_) => {}
-                            }
-                        }
-
-                        _ => {}
+                    command::Room::ConnectUser(id, sender) => {
+                        let mut room_ref = self.ctx.write().await;
+                        room_ref.connect_user(id, sender);
                     }
+
+                    command::Room::DisconnectUser(id) => {
+                        let mut room_ref = self.ctx.write().await;
+                        room_ref.disconnect_user(id);
+                    }
+
+                    //Break the loop, Finishing this room
+                    command::Room::Close => break,
                 }
-
-                Err(err) => match err {
-                    ErrorKind::Connection(index) => {
-                        let mut room_ref = self.room.lock().await;
-                        room_ref.disconnect_user(index).await;
-                        drop(room_ref);
-                    }
-
-                    ErrorKind::Msg(_) => {}
-                },
             }
-        }
+        })
     }
 }
