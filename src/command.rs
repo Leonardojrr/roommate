@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 pub enum User {
     //Event of User
-    Event(String, Value),
+    Event(String, String),
 
     //Connect to room
     ConnectRoom(String),
@@ -16,9 +16,10 @@ pub enum User {
     Close,
 }
 
+#[derive(Clone)]
 pub enum Room {
     //Event of Room
-    Event(String, Value, Emiter),
+    Event(String, String, Emiter),
 
     //Connect User
     ConnectUser(Uuid, UnboundedSender<User>),
@@ -29,6 +30,7 @@ pub enum Room {
     Close,
 }
 
+#[derive(Clone)]
 pub enum Emiter {
     User(Uuid),
     Room(String),
@@ -56,9 +58,9 @@ pub fn clasify_message(message: String) -> Result<User, String> {
             };
 
             let data = match object_from_user.get("data") {
-                Some(data) => data.clone(),
+                Some(data) => data.as_str().unwrap_or("").to_owned(),
 
-                None => json!({}),
+                None => String::from(""),
             };
 
             Ok(User::Event(event.to_owned(), data))

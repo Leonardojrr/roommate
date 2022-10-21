@@ -1,10 +1,8 @@
-mod connection;
-mod controller;
-mod event;
+pub mod connection;
+pub mod data;
+pub mod event;
 pub mod prelude;
-mod room;
-
-// new
+pub mod room;
 mod command;
 mod user;
 
@@ -33,7 +31,6 @@ macro_rules! run_server{
 macro_rules! router{
 
     ($socket_listener:ident, $room_ident:ident => [$($room_to_connect:ident),*], $($tokens:tt)+)=>{
-
         {
             let mut room_ref = $room_ident.ctx.lock().await;
 
@@ -52,7 +49,6 @@ macro_rules! router{
     };
 
     ($socket_listener:ident, $room_ident:ident, $($tokens:tt)+)=>{
-
         {
             let mut room_ref = $room_ident.ctx.lock().await;
 
@@ -70,7 +66,6 @@ macro_rules! router{
     };
 
     ($socket_listener:ident, $room_ident:ident => [$($room_to_connect:ident),*]) =>{
-
         {
             let mut room_ref = $room_ident.lock().await;
 
@@ -84,7 +79,6 @@ macro_rules! router{
     };
 
     ($socket_listener:ident, $room_ident:ident)=>{
-
         {
             let mut room_ref = $room_ident.ctx().await;
 

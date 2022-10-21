@@ -108,7 +108,7 @@ impl User {
                         }
                         else{
                             //Send error message
-                            Self::send_to_user(&self, result);
+                            Self::send_to_user(&mut self, result);
                         }
                      }
 
@@ -124,8 +124,8 @@ impl User {
         })
     }
 
-    fn send_to_user(&self, command_result: Result<command::User, String>) {
-        let sender = &self.sender;
+    fn send_to_user(&mut self, command_result: Result<command::User, String>) {
+        let sender = &mut self.sender;
         let mut message = json!({});
 
         match command_result {
@@ -141,7 +141,7 @@ impl User {
     }
 
     fn send_to_rooms(&self, command: command::Room) {
-        let room_senders = vec![];
+        let mut room_senders = vec![];
 
         let rooms = self.rooms.upgrade().expect("Server closed");
         for room_name in &self.connected_rooms {
@@ -151,7 +151,7 @@ impl User {
         match command {
             command::Room::Event(event, data, emiter) => {
                 for sender in room_senders {
-                    let _ = sender.send(command::Room::Event(event, data, emiter));
+                    let _ = sender.send(command::Room::Event(event.clone(), data.clone(), emiter.clone()));
                 }
             }
             _ => {}
@@ -194,7 +194,7 @@ impl User {
         match rooms_ref.get(&room_name) {
             Some(room_channel) => {
                 self.connected_rooms.insert(room_name);
-                room_channel.send(command::Room::ConnectUser(self.id, self.channel_sender));
+                room_channel.send(command::Room::ConnectUser(self.id, self.channel_sender.clone()));
             }
 
             None => {

@@ -45,7 +45,7 @@ impl<A: ToSocketAddrs> SocketListener<A> {
             match result {
                 Ok(ws) => {
                     let user = User::new(ws, Arc::downgrade(&self.room_channels));
-                    &user_task_handlers.push(user.run());
+                    user_task_handlers.push(user.run());
                 }
 
                 Err(_) => {}

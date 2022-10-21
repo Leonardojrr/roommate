@@ -1,12 +1,10 @@
-use crate::{command, event::Callback};
-use futures_util::future::join_all;
-use serde::Serialize;
-use serde_json::{self, json};
-use std::{collections::HashMap, sync::Arc};
+use crate::{command, event::{Callback, Events}, data::Data};
+use std::{collections::HashMap, sync::Arc, any::{TypeId, Any}};
 use tokio::{
     sync::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         RwLock,
+        Mutex
     },
     task::JoinHandle,
 };
@@ -15,292 +13,291 @@ use uuid::Uuid;
 #[macro_export]
 macro_rules! room {
     (
-
-        $room_name:ident <$state:tt>{
-            $state_init:expr,
-            $($tokens:tt)+
-        }
-    ) =>{
-
+        name:$room_name:expr,
+        data:[$($data:expr),+],
+        password:$password:expr,
+        events:{$($events:tt)+}
+    ) => {
         {
-            let room_name = stringify!($room_name);
-            let ctx: Arc<Mutex<Context<$state>>> = Context::new(String::from(room_name), $state_init);
-            let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel::<bool>(1);
+            let mut room = Room::new($room_name.to_owned(), Some($password.to_owned()));
+            $(room.insert_data($data.clone());)+
 
+            events!(room, $($events)+);
 
-            let mut room = Room::new(ctx.clone(), signal_receiver);
-
-            callback!(room, $state, $($tokens)+);
+            room
         }
     };
 
     (
-        $room_name:ident
+        name:$room_name:expr,
+        password:$password:expr,
+        events:{$($events:tt)+}
+    ) => {
         {
-            $($tokens:tt)+
+            let mut room = Room::new($room_name.to_owned(), Some($password.to_owned()));
+
+            events!(room, $($events)+);
+
+            room
         }
-    ) =>{
+        
+    };
+
+    (
+        name:$room_name:expr,
+        data:[$($data:expr),+],
+        events:{$($events:tt)+}
+    ) => {
 
         {
-            let room_name = stringify!($room_name);
-            let ctx: Arc<Mutex<Context<EmptyState>>> = Context::new(String::from(room_name), EmptyState);
-            let (signal_sender, signal_receiver) = tokio::sync::mpsc::channel::<bool>(1);
+            let mut room = Room::new($room_name.to_owned(), None);
+            $(room.insert_data($data.clone());)+
+            
+            events!(room, $($events)+);
 
-            let mut room = Room::new(ctx, signal_receiver);
-
-            callback!(room, EmptyState, $($tokens)+);
+            room
         }
-    }
+        
+    };
+    
+    (
+        name:$room_name:expr,
+        events:{$($events:tt)+}
+    ) => {
+
+        {
+            let mut room = Room::new($room_name.to_owned(), None);
+            
+            events!(room, $($events)+);
+
+            room
+        }
+        
+    };
+
 }
 
-pub struct Context<T> {
+pub struct Room{
     name: String,
-    state: Option<Arc<RwLock<T>>>,
-    emiter: Option<command::Emiter>,
-    user_senders: HashMap<Uuid, UnboundedSender<command::User>>,
-    room_senders: HashMap<String, UnboundedSender<command::Room>>,
-    sender: UnboundedSender<command::Room>,
+    password: Option<String>,
+    data: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    events: Events,
+    user_senders: RwLock<HashMap<Uuid, UnboundedSender<command::User>>>,
+    room_senders: RwLock<HashMap<String, UnboundedSender<command::Room>>>,
+    sender:UnboundedSender<command::Room>,
+    receiver: Mutex<UnboundedReceiver<command::Room>>
 }
 
-impl<T> Context<T> {
-    pub fn new(
-        name: String,
-        state: T,
-        sender: UnboundedSender<command::Room>,
-    ) -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(Self {
-            state,
-            name,
-            emiter: None,
-            user_senders: HashMap::new(),
-            room_senders: HashMap::new(),
-            sender,
-        }))
-    }
+impl Room  {
 
-    /////////////////////////////////////////////////////
+    pub fn new(name: String, password: Option<String>) -> Self{
+        let (sender, receiver) = unbounded_channel::<command::Room>();
 
-    pub fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub fn room_channel(&self) -> UnboundedSender<command::Room> {
-        self.sender.clone()
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub async fn connect_room<State>(&mut self, room: Arc<RwLock<Context<State>>>) {
-        let room_ref = room.read().await;
-
-        let sender = room_ref.room_channel();
-        let room_name = room_ref.name();
-
-        self.room_senders.insert(room_name, sender);
-    }
-
-    /////////////////////////////////////////////////////
-
-    fn last_emiter(&mut self) -> Option<EmisionKind> {
-        self.last_emiter.take()
-    }
-
-    /////////////////////////////////////////////////////
-
-    fn change_emiter(&mut self, emiter: EmisionKind) {
-        self.last_emiter = Some(emiter);
-    }
-
-    /////////////////////////////////////////////////////
-
-    fn connect_user(&mut self, user_id: Uuid, sender: UnboundedSender<command::User>) {
-        self.user_senders.insert(user_id, sender);
-    }
-
-    /////////////////////////////////////////////////////
-
-    async fn disconnect_user(&mut self, user_id: Uuid) {
-        self.user_senders.remove(&user_id);
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub fn get_state(&self) -> &T {
-        &self.state
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub fn get_mut_state(&mut self) -> &mut T {
-        &mut self.state
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub async fn broadcast<S: Serialize>(&mut self, event_name: &str, data: S) {
-        let json = json!({
-            "event": event_name,
-            "data": data
-        })
-        .to_string();
-
-        let msg = tungstenite::Message::Text(json);
-        let room_name = self.name();
-
-        for sender in self.senders.values_mut() {
-            let _ = sender.send((room_name.clone(), msg.clone()));
-        }
-
-        let mut user_senders_futures = vec![];
-
-        for user in &mut self.users {
-            user_senders_futures.push(user.send(msg.clone()));
-        }
-
-        join_all(user_senders_futures).await;
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub async fn emit<S: Serialize>(&mut self, event_name: &str, data: S) {
-        let json = json!({
-            "event": event_name,
-            "data": data
-        })
-        .to_string();
-
-        let msg = tungstenite::Message::Text(json);
-        let room_name = self.name();
-
-        match self.last_emiter() {
-            Some(EmisionKind::Room(emiter_room_name)) => {
-                for (map_room_name, sender) in &mut self.senders {
-                    if &emiter_room_name == map_room_name {
-                        continue;
-                    }
-
-                    let _ = sender.send((room_name.clone(), msg.clone()));
-                }
-
-                let mut user_senders_futures = vec![];
-
-                for user in &mut self.users {
-                    user_senders_futures.push(user.send(msg.clone()));
-                }
-
-                join_all(user_senders_futures).await;
-            }
-
-            Some(EmisionKind::User(emiter_user_index)) => {
-                for sender in self.senders.values_mut() {
-                    let _ = sender.send((room_name.clone(), msg.clone()));
-                }
-
-                let mut user_senders_futures = vec![];
-
-                for (index, user) in self.users.iter_mut().enumerate() {
-                    if index == emiter_user_index {
-                        continue;
-                    }
-                    user_senders_futures.push(user.send(msg.clone()));
-                }
-
-                join_all(user_senders_futures).await;
-            }
-
-            _ => {}
-        }
-    }
-
-    /////////////////////////////////////////////////////
-
-    pub async fn whisper<S: Serialize>(&mut self, event_name: &str, data: S) {
-        let json = json!({
-            "event": event_name,
-            "data": data
-        })
-        .to_string();
-
-        let msg = tungstenite::Message::Text(json);
-        let room_name = self.name();
-
-        match self.last_emiter() {
-            Some(EmisionKind::Room(emiter_room_name)) => {
-                match self.senders.get_mut(emiter_room_name.as_str()) {
-                    Some(sender) => {
-                        let _ = sender.send((room_name, msg));
-                    }
-
-                    None => {}
-                }
-            }
-
-            Some(EmisionKind::User(emiter_user_index)) => {
-                let _ = self.users[emiter_user_index].send(msg).await;
-            }
-
-            _ => {}
-        }
-    }
-}
-
-pub struct Room<'a, T: Send + Sync> {
-    ctx: Arc<RwLock<Context<T>>>,
-    event_list: HashMap<&'a str, Callback<T>>,
-    receiver: UnboundedReceiver<command::Room>,
-}
-
-impl<'a, T: Send + Sync> Room<'a, T> {
-    pub fn new(ctx: Arc<RwLock<Context<T>>>, receiver: UnboundedReceiver<command::Room>) -> Self {
         Self {
-            ctx,
-            event_list: HashMap::new(),
-            receiver,
+            name,
+            password, 
+            data: HashMap::new(), 
+            events: Events::new(),
+            user_senders:RwLock::new(HashMap::new()) ,
+            room_senders: RwLock::new(HashMap::new()) ,
+            sender,
+            receiver: Mutex::new(receiver)
         }
     }
 
-    pub fn insert_event(&mut self, event_name: &'a str, event: Callback<T>) {
-        self.event_list.insert(event_name, event);
-    }
+    pub async fn whisper(&self, emiter: command::Emiter, event:String, payload: String) {
+        match emiter {
+            command::Emiter::Room(room_name) =>{
+                let room_senders = self.room_senders.read().await;
 
-    async fn call(&self, event_name: String, data: String) {
-        let event_option = self.event_list.get(event_name.as_str());
-
-        match event_option {
-            Some(event_function) => {
-                event_function(Arc::clone(&self.ctx), data).await;
+                let room_sender = room_senders.get(&room_name).unwrap();
+                
+                let new_emiter = command::Emiter::Room(self.name.clone());
+                room_sender.send(command::Room::Event(event, payload, new_emiter));
             }
 
-            None => { /*panic!("The Event({}) doesn't exist",event_name)*/ }
+            command::Emiter::User(user_id) =>{
+                let user_senders = self.user_senders.read().await;
+
+                let user_sender = user_senders.get(&user_id).unwrap();
+
+                user_sender.send(command::User::Event(event, payload));
+            }
         }
     }
 
-    pub fn run(mut self) -> JoinHandle<()> {
+    pub async fn emit_to_users(&self, emiter: command::Emiter, event:String, payload: String) {
+
+        let user_senders = self.user_senders.read().await;
+
+        match  emiter {
+            command::Emiter::User(user_id) =>{
+                for (id, sender) in user_senders.iter(){
+                    if *id == user_id {continue;}
+
+                    sender.send(command::User::Event(event.clone(), payload.clone()));
+                }
+            }
+
+            command::Emiter::Room(_) =>{
+                for (_, sender) in user_senders.iter(){
+                    sender.send(command::User::Event(event.clone(), payload.clone()));
+                }
+            }
+            
+        }
+    }
+
+    pub async fn broadcast_to_users(&self, event:String, payload: String) {
+        let user_senders = self.user_senders.read().await;
+
+        for (_, sender) in user_senders.iter(){
+            sender.send(command::User::Event(event.clone(), payload.clone()));
+        }
+    }
+
+    pub async fn emit_to_rooms(&self, emiter: command::Emiter, event:String, payload: String) {
+        let room_senders = self.room_senders.read().await;
+
+        let new_emiter = command::Emiter::Room(self.name.clone());
+        let room_command = command::Room::Event(event, payload, new_emiter);
+
+        match  emiter {
+            command::Emiter::User(_) =>{
+                for (_, sender) in room_senders.iter(){
+                    sender.send(room_command.clone());
+                }
+            }
+
+            command::Emiter::Room(room_name) =>{
+                for (room_id, sender) in room_senders.iter(){
+                    if *room_id == room_name {continue;}
+                    sender.send(room_command.clone());
+                }
+            }
+        }
+    }
+
+    pub async fn broadcast_to_rooms(&self, event:String, payload: String) {
+        let room_senders = self.room_senders.read().await;
+
+        let new_emiter = command::Emiter::Room(self.name.clone());
+        let room_command = command::Room::Event(event, payload, new_emiter);
+
+        for (_, sender) in room_senders.iter(){
+            sender.send(room_command.clone());
+        }
+    }
+    
+    pub async fn emit(&self, emiter: command::Emiter, event:String, payload: String) {
+        let user_senders = self.user_senders.read().await;
+        let room_senders = self.room_senders.read().await;
+
+        match  emiter {
+            command::Emiter::User(user_id) =>{
+                for (id, sender) in user_senders.iter(){
+                    if *id == user_id {continue;}
+
+                    sender.send(command::User::Event(event.clone(), payload.clone()));
+                }
+
+                for (_, sender) in room_senders.iter(){
+                    let room_command = command::Room::Event(event.clone(), payload.clone(), command::Emiter::Room(self.name.clone()));
+                    sender.send(room_command);
+                }
+            }
+
+            command::Emiter::Room(room_name) =>{
+                for (room_id, sender) in room_senders.iter(){
+                    if *room_id == room_name {continue;}
+
+                    let room_command = command::Room::Event(event.clone(), payload.clone(), command::Emiter::Room(self.name.clone()));
+                    sender.send(room_command);
+                }
+
+                for (_, sender) in user_senders.iter(){
+                    sender.send(command::User::Event(event.clone(), payload.clone()));
+                }
+            }
+        }
+    }
+
+    pub async fn broadcast(&self, event: String, payload: String) {
+        let user_senders = self.user_senders.read().await;
+        let room_senders = self.room_senders.read().await;
+
+        for (_, sender) in room_senders.iter(){
+            let room_command = command::Room::Event(event.clone(), payload.clone(), command::Emiter::Room(self.name.clone()));
+            sender.send(room_command);
+        }
+
+        for (_, sender) in user_senders.iter(){
+            sender.send(command::User::Event(event.clone(), payload.clone()));
+        }
+
+    }
+
+    /////Data related functions////
+    pub fn share_data<T:'static>(&self) -> Data<T>{
+        self.data.get(&TypeId::of::<T>()).unwrap().downcast_ref::<Data<T>>().unwrap().clone()
+    }
+    
+    pub fn insert_data<T: Sync + Send + 'static>(&mut self, data:Data<T>){
+        self.data.insert(data.data_type_id,Box::new(data));
+    }
+
+    ////Event related functions////
+    pub fn on(&mut self, event_name: String, callback: Callback){
+        self.events.insert_event(event_name, callback);
+    }
+
+    pub fn call(self: &Arc<Room>, event_name:String, emiter: command::Emiter, payload: String) -> JoinHandle<()>{
+        let future = self.events.get(&event_name)(self.clone(), emiter, payload);
+        tokio::spawn(async move{future.await})
+    }
+
+
+    ///Runner////
+    pub fn run(self: &Arc<Room>) -> JoinHandle<()>{
+
+        let room  = self.clone();
+
         tokio::spawn(async move {
-            loop {
-                let room_command = self
-                    .receiver
-                    .recv()
-                    .await
-                    .expect("There is no more connections to this room");
+            loop{
+                let mut receiver  = room.receiver.lock().await;
 
-                match room_command {
-                    command::Room::Event(event_name, data, emiter) => {}
+                let received_message = receiver.recv().await;
 
-                    command::Room::ConnectUser(id, sender) => {
-                        let mut room_ref = self.ctx.write().await;
-                        room_ref.connect_user(id, sender);
+                match received_message {
+                    Some(room_command) =>{
+                        match room_command {
+
+                            command::Room::Event(event_name, payload, emiter) =>{
+
+                                room.call(event_name, emiter, payload);
+
+                            }
+
+                            command::Room::ConnectUser(id, user_sender ) =>{
+
+                                let mut user_senders = room.user_senders.write().await;
+                                user_senders.insert(id, user_sender);
+
+
+                            }
+
+                            command::Room::DisconnectUser(id) =>{
+
+                                let mut user_senders = room.user_senders.write().await;
+                                user_senders.remove(&id);
+
+                            }
+
+                            command::Room::Close => break
+
+                        }
                     }
-
-                    command::Room::DisconnectUser(id) => {
-                        let mut room_ref = self.ctx.write().await;
-                        room_ref.disconnect_user(id);
-                    }
-
-                    //Break the loop, Finishing this room
-                    command::Room::Close => break,
+                    None => break
                 }
             }
         })
