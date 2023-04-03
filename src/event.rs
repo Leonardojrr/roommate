@@ -1,114 +1,403 @@
-use crate::{room::Room, command};
-use std::{future::Future, pin::Pin, sync::Arc, collections::HashMap};
+use crate::{protocol, room::Room};
+use serde_json::Value;
+use std::{future::Future, pin::Pin, sync::Arc};
 
-pub type Callback = Box<dyn Fn(Arc<Room>, command::Emiter, String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type Callback = Box<
+    dyn Fn(Arc<Room>, protocol::Emiter, Value) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
-pub struct Events{
-    events_map: HashMap<String, Callback>
-}
+#[macro_export]
+macro_rules! event {
+    (
+        $event_name:expr,
+        #[$($data:ident : $data_type:ty),+]
+        ($room_ref:ident, $payload:ident)
+        $event_block:block
+    ) => {{
+        let event: (String, Callback) = (String::from($event_name),  Box::new(|room: Arc<Room>, emiter: protocol::Emiter, payload:Value|{
 
-impl Events{
-    pub fn new() -> Self{
-        Self { 
-            events_map: HashMap::new()
+            $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+            let $room_ref = room;
+            let $payload = payload;
+
+             Box::pin(async move{$event_block})
+
+         }));
+
+         event
+    }};
+
+    (
+        $event_name:expr,
+        #[$($data:ident : $data_type:ty),+]
+        ($room_ref:ident, $payload:ident : $payload_type:ty)
+        $event_block:block
+    ) => {
+
+        (String::from($event_name),  Box::new(|room: Arc<Room>|{
+
+            $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+            $room_ref = room;
+
+             Box::pin(async move{$event_block})
+        }))
+    };
+
+    (
+        $event_name:expr,
+        ($room_ref:ident, $payload:ident)
+        $event_block:block
+    ) => {
+
+        {
+            let event : (String, Callback) = (String::from($event_name), Box::new(|room: Arc<Room>, emiter: protocol::Emiter, payload:Value|{
+                let $room_ref = room;
+                let $payload = payload;
+
+                 Box::pin(async move{$event_block})
+            }));
+
+            event
         }
-    }
-
-    pub fn get(&self, event_name: &str) -> &Callback{
-        self.events_map.get(event_name).unwrap()
-    }
-
-    pub fn insert_event(&mut self, event_name: String, callback: Callback){
-        self.events_map.insert(event_name, callback);
-    }
+    };
 }
-
 
 #[macro_export]
 macro_rules! events {
     (
-        $room:expr,
         #[$($data:ident : $data_type:ty),+]
-        $event_name:expr => $room_ref:ident, $payload:ident $event_block:block, $($tokens:tt)+
-    ) => {
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block, $($tokens:tt)+
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
 
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
-    };
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = payload;
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!(events_map, $($tokens:tt)+)
+
+        events_map
+    }};
 
     (
-        $room:expr,
         #[$($data:ident : $data_type:ty),+]
-        $event_name:expr => $room_ref:ident, $payload:ident : $payload_type:ty $event_block:block, $($tokens:tt)+
-    ) => {
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident : $payload_type:ty) $event_block:block, $($tokens:tt)+
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
 
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
-        $room.insert_event($event_name.to_owned(), Box::new(|room: Arc<Room>|{
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = From<$payload_type>::from(payload);
 
-            $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
-     
-             Box::pin(async move{$event_block})
-     
-         }));
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
 
-        events!($room, $($tokens)+);
-        
-    };
+        events!(events_map, $($tokens:tt)+)
+
+        events_map
+    }};
 
     (
-        $room:expr,
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block, $($tokens:tt)+
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
+
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = payload;
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!(events_map, $($tokens:tt)+)
+
+        events_map
+    }};
+
+    (
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident : $payload_type:ty) $event_block:block, $($tokens:tt)+
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
+
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = From<$payload_type>::from(payload);
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!(events_map, $($tokens:tt)+)
+
+        events_map
+    }};
+
+    (
         #[$($data:ident : $data_type:ty),+]
-        $event_name:expr => $room_ref:ident, $payload:ident $event_block:block
-    ) => {
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
 
-       
-        
-    };
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = payload;
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events_map
+    }};
 
     (
-        $room:expr,
         #[$($data:ident : $data_type:ty),+]
-        $event_name:expr => $room_ref:ident, $payload:ident:$payload_type:ty $event_block:block
-    ) => {
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident : $payload_type:ty) $event_block:block
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
 
-        $room.insert_event($event_name.to_owned(), Box::new(|room: Arc<Room>|{
-            
-            $(let $data =  room.share_data::<$data_type>();)+
-     
-             Box::pin(async move{$event_block})
-     
-         }));            
-    };
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
-    (
-        $room:expr,
-        $event_name:expr => $room_ref:ident, $payload:ident $event_block:block, $($tokens:tt)+
-    ) => {
-    };
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = From<$payload_type>::from(payload);
 
-    (
-        $room:expr,
-        $event_name:expr => $room_ref:ident, $payload:ident:$payload_type:ty $event_block:block, $($tokens:tt)+
-    ) => {
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
 
-        events!($room, $($tokens)+);
-        
-    };
-
-
-
+        events_map
+    }};
 
     (
-        $room:expr,
-        $event_name:expr => $room_ref:ident, $payload:ident $event_block:block
-    ) => {
-       
-    };
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
+
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = payload;
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events_map
+    }};
 
     (
-        $room:expr,
-        $event_name:expr => $room_ref:ident, $payload:ident:$payload_type:ty $event_block:block
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident : $payload_type:ty) $event_block:block
+    ) => {{
+        let mut events_map: HashMap<String, Callback> = HashMap::new();
+
+        events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload: $payload_type = From::<Value>::from(payload);
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events_map
+    }};
+
+    //////////////////////////////////////////////////////////////
+    ($events_map:ident,
+        #[$($data:ident : $data_type:ty),+]
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block, $($tokens:tt)+
     ) => {
+        $events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = payload;
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!($events_map, $($tokens:tt)+)
 
     };
+
+    ($events_map:ident,
+        #[$($data:ident : $data_type:ty),+]
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident : $payload_type:ty) $event_block:block, $($tokens:tt)+
+    ) => {
+        $events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = From<$payload_type>::from(payload);
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!($events_map, $($tokens:tt)+)
+
+    };
+
+    ($events_map:ident,
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block, $($tokens:tt)+
+    ) => {
+        $events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = payload;
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!($events_map, $($tokens:tt)+)
+
+    };
+
+    ($events_map:ident,
+        $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident:$payload_type:ty) $event_block:block, $($tokens:tt)+
+    ) => {
+        $events_map.insert(String::from($event_name),
+            Box::new(
+                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    let $room_ref = room;
+                    let $emiter = emiter;
+                    let $payload = From<$payload_type>::from(payload);
+
+                    Box::pin(async move { $event_block })
+                },
+            ),
+        );
+
+        events!($events_map, $($tokens:tt)+)
+
+    };
+
+    //////////////////////////////////////////////////////////////
+    ($events_map:ident,
+            #[$($data:ident : $data_type:ty),+]
+            $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block
+        ) => {
+            $events_map.insert(String::from(
+                $event_name,
+                Box::new(
+                    |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                        $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+
+                        let $room_ref = room;
+                        let $emiter = emiter;
+                        let $payload = payload;
+
+                        Box::pin(async move { $event_block })
+                    },
+                ),
+            ));
+        };
+
+    ($events_map:ident,
+            #[$($data:ident : $data_type:ty),+]
+            $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident : $payload_type:ty) $event_block:block
+        ) => {
+            $events_map.insert(String::from($event_name),
+                Box::new(
+                    |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                        $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
+
+                        let $room_ref = room;
+                        let $emiter = emiter;
+                        let $payload = From<$payload_type>::from(payload);
+
+                        Box::pin(async move { $event_block })
+                    },
+                ),
+            );
+        };
+
+    ($events_map:ident,
+            $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident) $event_block:block
+        ) => {
+            $events_map.insert(String::from($event_name),
+                Box::new(
+                    |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                        let $room_ref = room;
+                        let $emiter = emiter;
+                        let $payload = payload;
+
+                        Box::pin(async move { $event_block })
+                    },
+                ),
+            );
+        };
+
+    ($events_map:ident,
+            $event_name:expr => ($room_ref:ident, $emiter:ident, $payload:ident:$payload_type:ty) $event_block:block
+        ) => {
+            $events_map.insert(String::from($event_name),
+                Box::new(
+                    |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                        let $room_ref = room;
+                        let $emiter = emiter;
+                        let $payload = From<$payload_type>::from(payload);
+
+                        Box::pin(async move { $event_block })
+                    },
+                ),
+            );
+        };
 }
-

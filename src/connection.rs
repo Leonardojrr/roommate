@@ -1,4 +1,4 @@
-use crate::{command::Room, user::User};
+use crate::{protocol::Room, user::User};
 
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
@@ -8,12 +8,12 @@ use tokio::{
 };
 use tokio_tungstenite::accept_async;
 
-pub struct SocketListener<A: ToSocketAddrs> {
+pub struct SocketListener<A: ToSocketAddrs + Send + Sync + 'static> {
     pub addr: A,
     pub room_channels: Arc<HashMap<String, UnboundedSender<Room>>>,
 }
 
-impl<A: ToSocketAddrs> SocketListener<A> {
+impl<A: ToSocketAddrs + Send + Sync + 'static> SocketListener<A> {
     pub fn new(addr: A, room_channels: HashMap<String, UnboundedSender<Room>>) -> Self {
         let room_channels = Arc::new(room_channels);
 
@@ -33,23 +33,28 @@ impl<A: ToSocketAddrs> SocketListener<A> {
     //     self.room_channels.remove(room, room_channel);
     // }
 
-    pub async fn listen(&self) {
-        let connection_listener = TcpListener::bind(&self.addr).await.unwrap();
-        let mut user_task_handlers: Vec<JoinHandle<()>> = vec![];
+    pub fn listen(self) -> JoinHandle<()> {
+        tokio::task::spawn(async move {
+            let connection_listener = TcpListener::bind(&self.addr)
+                .await
+                .expect("The address of the socket is not valid");
 
-        loop {
-            let (stream, _) = connection_listener.accept().await.unwrap();
+            let mut user_task_handlers: Vec<JoinHandle<()>> = vec![];
 
-            let result = accept_async(stream).await;
+            loop {
+                let (stream, _) = connection_listener.accept().await.unwrap();
 
-            match result {
-                Ok(ws) => {
-                    let user = User::new(ws, Arc::downgrade(&self.room_channels));
-                    user_task_handlers.push(user.run());
+                let result = accept_async(stream).await;
+
+                match result {
+                    Ok(ws) => {
+                        let user = User::new(ws, Arc::downgrade(&self.room_channels));
+                        user_task_handlers.push(user.run());
+                    }
+
+                    Err(_) => {}
                 }
-
-                Err(_) => {}
             }
-        }
+        })
     }
 }

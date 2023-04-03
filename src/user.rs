@@ -1,14 +1,11 @@
-use crate::command::{self, clasify_message, Emiter};
+use crate::protocol::{self, Emiter};
 use futures_util::{
     select,
     stream::{SplitSink, SplitStream},
     FutureExt, SinkExt, StreamExt,
 };
-use serde_json::{self, json};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Weak,
-};
+use serde_json::{self, Value};
+use std::{collections::HashMap, sync::Weak};
 use tokio::{
     net::TcpStream,
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -24,13 +21,14 @@ type Receiver = SplitStream<WebSocketStream<TcpStream>>;
 pub struct User {
     id: Uuid,
     //Map of all the rooms in the websocket server with their channel sender
-    rooms: Weak<HashMap<String, UnboundedSender<command::Room>>>,
+    rooms: Weak<HashMap<String, UnboundedSender<protocol::Room>>>,
+
     //Set of rooms which this user is currently subscribe to
-    connected_rooms: HashSet<String>,
+    connected_rooms: HashMap<String, UnboundedSender<protocol::Room>>,
 
     //This channel exist to connect other entities to this user
-    channel_receiver: UnboundedReceiver<command::User>,
-    channel_sender: UnboundedSender<command::User>,
+    channel_receiver: UnboundedReceiver<protocol::User>,
+    channel_sender: UnboundedSender<protocol::User>,
 
     //Client sender
     sender: Sender,
@@ -41,12 +39,12 @@ pub struct User {
 impl User {
     pub fn new(
         stream: WebSocketStream<TcpStream>,
-        rooms: Weak<HashMap<String, UnboundedSender<command::Room>>>,
+        rooms: Weak<HashMap<String, UnboundedSender<protocol::Room>>>,
     ) -> Self {
         let id = Uuid::new_v4();
         let (sender, receiver) = stream.split();
-        let (channel_sender, channel_receiver) = unbounded_channel::<command::User>();
-        let connected_rooms = HashSet::new();
+        let (channel_sender, channel_receiver) = unbounded_channel::<protocol::User>();
+        let connected_rooms = HashMap::new();
 
         Self {
             id,
@@ -84,102 +82,102 @@ impl User {
                         };
 
 
-                        let result = Self::clasify_user_input(&mut self, message);
+                        let result = self.classify_user_input( message);
 
-                        if let Ok(command) = result{
+                        match result {
+                            Ok(user_protocol) =>{
 
-                            match command{
+                                match user_protocol{
+                                    protocol::User::Event(event_name, data) =>{
+                                        Self::send_to_rooms(&self, protocol::Room::Event(event_name, data, Emiter::User(self.id)));
+                                    }
 
-                                command::User::Event(event_name, data) =>{
-                                    Self::send_to_rooms(&self, command::Room::Event(event_name, data, Emiter::User(self.id)));
+                                    protocol::User::ConnectRoom(room_name) =>{
+                                        Self::connect_room(&mut self, room_name)
+                                    }
+
+                                    protocol::User::DisconnectRoom(room_name) =>{
+                                        Self::disconnect_room(&mut self, room_name)
+                                    }
+
+                                    protocol::User::Close =>{break}
                                 }
+                            },
 
-                                command::User::ConnectRoom(room_name) =>{
-                                    Self::connect_room(&mut self, room_name)
-                                }
-
-                                command::User::DisconnectRoom(room_name) =>{
-                                    Self::disconnect_room(&mut self, room_name)
-                                }
-
-                                command::User::Close =>{break}
-                            }
-
-                        }
-                        else{
-                            //Send error message
-                            Self::send_to_user(&mut self, result);
+                            Err(user_protocol_error) => self.send_to_user(Err(user_protocol_error)).await,
                         }
                      }
 
                      //This is the message that come from other sources that are connected to this task with the input channel
                      room_input = room_input_fut.fuse() =>{
+                        match room_input{
+                            Some(user_protocol) =>{
+                                match user_protocol{
+                                    protocol::User::Event(event_name, data) =>{
+                                        let _ = Self::send_to_user(&mut self, Ok(protocol::User::Event(event_name, data))).await;
+                                    }
 
+                                    protocol::User::ConnectRoom(room_name) =>{
+                                        Self::connect_room(&mut self, room_name)
+                                    }
 
+                                    protocol::User::DisconnectRoom(room_name) =>{
+                                        Self::disconnect_room(&mut self, room_name)
+                                    }
 
-
+                                    protocol::User::Close =>{break}
+                                }
+                            }
+                            None => unimplemented!()
+                        }
                      }
                 }
             }
         })
     }
 
-    fn send_to_user(&mut self, command_result: Result<command::User, String>) {
+    async fn send_to_user(&mut self, command_result: Result<protocol::User, protocol::Error>) {
         let sender = &mut self.sender;
-        let mut message = json!({});
 
-        match command_result {
-            Ok(command) => {}
+        let message: Value = match command_result {
+            Ok(command) => command.into(),
 
-            Err(error) => {
-                message = json!({"event": "error", "msg": error});
-            }
-        }
+            Err(error) => error.into(),
+        };
 
         let serialize_message = serde_json::to_string(&message).unwrap();
-        sender.send(Message::text(serialize_message));
+        println!("{serialize_message}");
+        let _ = sender.send(Message::text(serialize_message)).await;
     }
 
-    fn send_to_rooms(&self, command: command::Room) {
-        let mut room_senders = vec![];
-
-        let rooms = self.rooms.upgrade().expect("Server closed");
-        for room_name in &self.connected_rooms {
-            room_senders.push(rooms.get(room_name).unwrap());
-        }
-
-        match command {
-            command::Room::Event(event, data, emiter) => {
-                for sender in room_senders {
-                    let _ = sender.send(command::Room::Event(event.clone(), data.clone(), emiter.clone()));
-                }
-            }
-            _ => {}
+    fn send_to_rooms(&self, command: protocol::Room) {
+        for (_, room_sender) in &self.connected_rooms {
+            let _ = room_sender.send(command.clone());
         }
     }
 
-    fn clasify_user_input(&mut self, input: Message) -> Result<command::User, String> {
+    fn classify_user_input(&mut self, input: Message) -> Result<protocol::User, protocol::Error> {
         match input {
             //Handle message if it is text
-            Text(message) => Ok(clasify_message(message)?),
+            Text(message) => Ok(protocol::User::try_from(message)?),
 
             //Handle message if it is binary data
-            Binary(bytes) => {
+            Binary(_) => {
                 unimplemented!();
             }
 
             //Handle message if it is a ping
-            Ping(bytes) => {
+            Ping(_) => {
                 unimplemented!();
             }
 
             //Handle message if it is a pong
-            Pong(bytes) => {
+            Pong(_) => {
                 unimplemented!();
             }
 
             //Handle close message
-            Close(close_frame) => {
+            Close(_) => {
                 unimplemented!();
             }
         }
@@ -193,8 +191,12 @@ impl User {
 
         match rooms_ref.get(&room_name) {
             Some(room_channel) => {
-                self.connected_rooms.insert(room_name);
-                room_channel.send(command::Room::ConnectUser(self.id, self.channel_sender.clone()));
+                self.connected_rooms.insert(room_name, room_channel.clone());
+
+                let _ = room_channel.send(protocol::Room::ConnectUser(
+                    self.id,
+                    self.channel_sender.clone(),
+                ));
             }
 
             None => {
@@ -212,7 +214,7 @@ impl User {
         match rooms_ref.get(&room_name) {
             Some(room_channel) => {
                 self.connected_rooms.remove(&room_name);
-                room_channel.send(command::Room::DisconnectUser(self.id));
+                let _ = room_channel.send(protocol::Room::DisconnectUser(self.id));
             }
 
             None => {
