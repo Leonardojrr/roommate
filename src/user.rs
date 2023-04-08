@@ -146,7 +146,6 @@ impl User {
         };
 
         let serialize_message = serde_json::to_string(&message).unwrap();
-        println!("{serialize_message}");
         let _ = sender.send(Message::text(serialize_message)).await;
     }
 
