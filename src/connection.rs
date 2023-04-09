@@ -23,16 +23,6 @@ impl<A: ToSocketAddrs + Send + Sync + 'static> SocketListener<A> {
         }
     }
 
-    //For later, also for this we I need to put a RWLock inside the room_channels Arc
-
-    // pub fn connect_room(&mut self, room: String, room_channel: UnboundedSender<Room>) {
-    //     self.room_channels.insert(room, room_channel);
-    // }
-
-    // pub fn disconnect_room(&mut self, room: String, room_channel: UnboundedSender<Room>) {
-    //     self.room_channels.remove(room, room_channel);
-    // }
-
     pub fn listen(self) -> JoinHandle<()> {
         tokio::task::spawn(async move {
             let connection_listener = TcpListener::bind(&self.addr)
