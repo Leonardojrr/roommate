@@ -9,25 +9,20 @@ pub enum Emiter {
 }
 
 pub enum Error {
-    CommandNotfound(String),
-    CommandIsNotAString,
+    EventIsNotAString,
     NeedMoreArguments,
     NotAJson,
-    NoCommandIncluded,
+    NoEventIncluded,
 }
 
 impl Into<String> for Error {
     fn into(self) -> String {
         match self {
-            Self::CommandNotfound(unknown_command) => {
-                format!("The command {unknown_command} doesn't exist")
-            }
-
             Self::NeedMoreArguments => "This command needs more argument to work".to_string(),
 
-            Self::CommandIsNotAString => "The command property has to be a string".to_string(),
+            Self::EventIsNotAString => "The event property has to be a string".to_string(),
 
-            Self::NoCommandIncluded => "The data doesn't include a command property".to_string(),
+            Self::NoEventIncluded => "The data doesn't include a event property".to_string(),
 
             Self::NotAJson => "The data sended is not in a json format".to_string(),
         }
@@ -66,35 +61,21 @@ impl TryFrom<String> for User {
             Err(_) => return Err(Error::NotAJson),
         };
 
-        let command = match &json["command"] {
-            Value::String(command) => command,
+        let event = match &json["event"] {
+            Value::String(event) => event,
 
-            Value::Null => return Err(Error::NoCommandIncluded),
-            _ => return Err(Error::CommandIsNotAString),
+            Value::Null => return Err(Error::NoEventIncluded),
+            _ => return Err(Error::EventIsNotAString),
         };
 
-        let user_protocol = match command.as_str() {
-            "message" => {
-                let event = match &json["event"] {
-                    Value::String(event) => event.clone(),
-                    _ => return Err(Error::NeedMoreArguments),
-                };
-
-                let data = match json.get("data") {
-                    Some(data) => data,
-                    None => return Err(Error::NeedMoreArguments),
-                };
-
-                User::Event(event, data.clone())
-            }
-
+        let user_protocol = match event.as_str() {
             "connect" | "disconnect" => {
                 let room = match &json["room"] {
                     Value::String(room) => room.clone(),
                     _ => return Err(Error::NeedMoreArguments),
                 };
 
-                match command.as_str() {
+                match event.as_str() {
                     "connect" => User::ConnectRoom(room),
                     "disconnect" => User::DisconnectRoom(room),
 
@@ -104,7 +85,14 @@ impl TryFrom<String> for User {
 
             "close" => User::Close,
 
-            _ => return Err(Error::CommandNotfound(command.clone())),
+            event => {
+                let data = match json.get("data") {
+                    Some(data) => data,
+                    None => return Err(Error::NeedMoreArguments),
+                };
+
+                User::Event(event.to_string(), data.clone())
+            }
         };
 
         return Ok(user_protocol);
