@@ -33,8 +33,6 @@ impl EventMap {
     pub fn insert(&mut self, event: String, callback: Callback) {
         let event_name: Vec<&str> = event.split(':').map(|string| string.trim()).collect();
 
-        println!("{}", event_name.len());
-
         match event_name.len() {
             2 => {
                 self.hashmap.insert(
