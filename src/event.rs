@@ -33,6 +33,8 @@ impl EventMap {
     pub fn insert(&mut self, event: String, callback: Callback) {
         let event_name: Vec<&str> = event.split(':').map(|string| string.trim()).collect();
 
+        println!("{}", event_name.len());
+
         match event_name.len() {
             2 => {
                 self.hashmap.insert(
@@ -41,12 +43,12 @@ impl EventMap {
                 );
             }
 
-            0 => {
+            1 => {
                 self.hashmap
                     .insert(None, HashMap::from([(event, callback)]));
             }
 
-            _ => panic!("THe event {event} is not in the right format"),
+            _ => panic!("The event '{event}' is not in the right format"),
         }
     }
 
@@ -123,7 +125,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -148,7 +150,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> = room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -169,10 +171,9 @@ macro_rules! events {
         #[$($data:ident : $data_type:ty),+]
         $event_name:expr => ($room_ref:ident, $payload:ident, $emiter:ident ) $event_block:block
     ) => {
-        $events_map.insert(String::from(
-            $event_name,
+        $events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -182,7 +183,7 @@ macro_rules! events {
                     Box::pin(async move { $event_block })
                 },
             ),
-        ));
+        );
     };
 
     ($events_map:ident,
@@ -191,7 +192,7 @@ macro_rules! events {
     ) => {
         $events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -213,7 +214,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -236,7 +237,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -258,7 +259,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     let $room_ref = room;
                     let $emiter = emiter;
                     let $payload = payload;
@@ -280,7 +281,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     let $room_ref = room;
                     let $emiter = emiter;
 
@@ -303,7 +304,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     let $room_ref = room;
                     let $emiter = emiter;
                     let $payload = payload;
@@ -323,7 +324,7 @@ macro_rules! events {
 
         events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     let $room_ref = room;
                     let $emiter = emiter;
                     let $payload: Result<$payload_type, _> = TryFrom::<Value>::try_from(payload);
@@ -343,7 +344,7 @@ macro_rules! events {
     ) => {
         $events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -365,7 +366,7 @@ macro_rules! events {
     ) => {
         $events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     $(let $data: Data<$data_type> =  room.share_data::<$data_type>();)+
 
                     let $room_ref = room;
@@ -386,7 +387,7 @@ macro_rules! events {
     ) => {
         $events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     let $room_ref = room;
                     let $emiter = emiter;
                     let $payload = payload;
@@ -405,7 +406,7 @@ macro_rules! events {
     ) => {
         $events_map.insert(String::from($event_name),
             Box::new(
-                |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                     let $room_ref = room;
                     let $emiter = emiter;
                     let $payload : Result<$payload_type, _> = TryFrom::<Value>::try_from(payload);
@@ -427,7 +428,7 @@ macro_rules! events {
         ) => {
             $events_map.insert(String::from($event_name),
                 Box::new(
-                    |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                         let $room_ref = room;
                         let $emiter = emiter;
                         let $payload = payload;
@@ -443,7 +444,7 @@ macro_rules! events {
         ) => {
             $events_map.insert(String::from($event_name),
                 Box::new(
-                    |room: Arc<Room>, emiter: protocol::Emiter, payload: Value| {
+                    |room: Arc<Room>, payload: Value, emiter: protocol::Emiter| {
                         let $room_ref = room;
                         let $emiter = emiter;
                         let $payload : Result<$payload_type, _> = TryFrom::<Value>::try_from(payload);
