@@ -1,4 +1,9 @@
-use crate::{data::Data, event::Callback, protocol, room::Room};
+use crate::{
+    data::Data,
+    event::{Callback, EventMap},
+    protocol,
+    room::Room,
+};
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
@@ -11,7 +16,7 @@ pub struct RoomBuilder {
     name: Option<String>,
     password: Option<String>,
     data: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-    events: HashMap<String, Callback>,
+    events: EventMap,
 }
 
 impl RoomBuilder {
@@ -20,7 +25,7 @@ impl RoomBuilder {
             name: None,
             password: None,
             data: HashMap::new(),
-            events: HashMap::new(),
+            events: EventMap::new(),
         }
     }
 
@@ -47,10 +52,8 @@ impl RoomBuilder {
         self
     }
 
-    pub fn events(mut self, events: HashMap<String, Callback>) -> RoomBuilder {
-        for (event_name, callback) in events {
-            self.events.insert(event_name, callback);
-        }
+    pub fn events(mut self, eventmap: EventMap) -> RoomBuilder {
+        self.events.insert_eventmap(eventmap);
         self
     }
 

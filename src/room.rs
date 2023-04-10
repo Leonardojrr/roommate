@@ -1,4 +1,4 @@
-use crate::{data::Data, event::Callback, protocol};
+use crate::{data::Data, event::EventMap, protocol};
 use serde_json::Value;
 use std::{
     any::{Any, TypeId},
@@ -18,7 +18,7 @@ pub struct Room {
     pub name: String,
     pub password: Option<String>,
     pub data: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-    pub events: HashMap<String, Callback>,
+    pub events: EventMap,
     pub user_senders: RwLock<HashMap<Uuid, UnboundedSender<protocol::User>>>,
     pub room_senders: RwLock<HashMap<String, UnboundedSender<protocol::Room>>>,
     pub sender: UnboundedSender<protocol::Room>,
@@ -206,12 +206,22 @@ impl Room {
             .clone()
     }
 
-    pub fn call(self: &Arc<Room>, event_name: String, emiter: protocol::Emiter, payload: Value) {
-        let result = self.events.get(&event_name);
+    pub fn call(self: &Arc<Room>, event_name: String, payload: Value, emiter: protocol::Emiter) {
+        let callback = match &emiter {
+            protocol::Emiter::User(_) => self.events.get_default_event(&event_name),
 
-        match result {
+            protocol::Emiter::Room(room_name) => match self.events.get(&Some(room_name.clone())) {
+                Some(room_events_map) => match room_events_map.get(&event_name) {
+                    None => self.events.get_default_event(&event_name),
+                    some_callback => some_callback,
+                },
+                None => self.events.get_default_event(&event_name),
+            },
+        };
+
+        match callback {
             Some(function) => {
-                let future = function(self.clone(), emiter, payload);
+                let future = function(self.clone(), payload, emiter);
                 tokio::spawn(async move { future.await });
             }
 
@@ -239,7 +249,7 @@ impl Room {
                 match received_message {
                     Some(room_command) => match room_command {
                         protocol::Room::Event(event_name, payload, emiter) => {
-                            room.call(event_name, emiter, payload);
+                            room.call(event_name, payload, emiter);
                         }
 
                         protocol::Room::ConnectUser(id, user_sender) => {

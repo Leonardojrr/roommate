@@ -81,7 +81,6 @@ impl User {
                             None => continue
                         };
 
-
                         let result = self.classify_user_input( message);
 
                         match result {
