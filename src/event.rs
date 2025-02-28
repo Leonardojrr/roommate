@@ -1,59 +1,39 @@
 use crate::{protocol, room::Room};
 use serde_json::Value;
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    future::Future,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    sync::Arc,
+};
 
-pub type Callback = Box<
-    dyn Fn(Arc<Room>, Value, protocol::Emiter) -> Pin<Box<dyn Future<Output = ()> + Send>>
-        + Send
-        + Sync,
->;
+pub type BoxFut = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub type Event = Box<dyn Fn(Arc<Room>, Value, protocol::Emiter) -> BoxFut + Send + Sync>;
 
 pub struct EventMap {
-    hashmap: HashMap<Option<String>, HashMap<String, Callback>>,
+    events: HashMap<String, Event>,
 }
 
 impl EventMap {
     pub fn new() -> Self {
         Self {
-            hashmap: HashMap::new(),
+            events: HashMap::new(),
         }
     }
+}
 
-    pub fn get(&self, value: &Option<String>) -> Option<&HashMap<String, Callback>> {
-        self.hashmap.get(value)
+impl Deref for EventMap {
+    type Target = HashMap<String, Event>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.events
     }
+}
 
-    pub fn get_default_event(&self, event_name: &str) -> Option<&Callback> {
-        match self.get(&None) {
-            Some(default_events_map) => default_events_map.get(event_name),
-            None => None,
-        }
-    }
-
-    pub fn insert(&mut self, event: String, callback: Callback) {
-        let event_name: Vec<&str> = event.split(':').map(|string| string.trim()).collect();
-
-        match event_name.len() {
-            2 => {
-                self.hashmap.insert(
-                    Some(event_name[0].into()),
-                    HashMap::from([(event_name[1].into(), callback)]),
-                );
-            }
-
-            1 => {
-                self.hashmap
-                    .insert(None, HashMap::from([(event, callback)]));
-            }
-
-            _ => panic!("The event '{event}' is not in the right format"),
-        }
-    }
-
-    pub fn insert_eventmap(&mut self, eventmap: EventMap) {
-        for (k, v) in eventmap.hashmap.into_iter() {
-            self.hashmap.insert(k, v);
-        }
+impl DerefMut for EventMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.events
     }
 }
 

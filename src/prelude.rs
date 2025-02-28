@@ -1,5 +1,5 @@
 pub use crate::connection::SocketListener;
-pub use crate::event::{Callback, EventMap};
+pub use crate::event::{Event, EventMap};
 pub use crate::protocol;
 pub use crate::room::Room;
 pub use crate::room_builder::RoomBuilder;

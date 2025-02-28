@@ -1,10 +1,9 @@
-use crate::{data::Data, event::EventMap, protocol};
-use serde_json::Value;
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    sync::Arc,
+use crate::{
+    event::{Event, EventMap},
+    protocol,
 };
+use serde_json::Value;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender},
@@ -17,7 +16,6 @@ use uuid::Uuid;
 pub struct Room {
     pub name: String,
     pub password: Option<String>,
-    pub data: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     pub events: EventMap,
     pub user_senders: RwLock<HashMap<Uuid, UnboundedSender<protocol::User>>>,
     pub room_senders: RwLock<HashMap<String, UnboundedSender<protocol::Room>>>,
@@ -196,44 +194,12 @@ impl Room {
         }
     }
 
-    /////Data related functions////
-    pub fn share_data<T: 'static>(&self) -> Data<T> {
-        self.data
-            .get(&TypeId::of::<T>())
-            .unwrap()
-            .downcast_ref::<Data<T>>()
-            .unwrap()
-            .clone()
+    fn get_event(&self, event_name: &str) -> &Event {
+        self.events.get(event_name).unwrap()
     }
 
-    pub fn call(self: &Arc<Room>, event_name: String, payload: Value, emiter: protocol::Emiter) {
-        let callback = match &emiter {
-            protocol::Emiter::User(_) => self.events.get_default_event(&event_name),
-
-            protocol::Emiter::Room(room_name) => match self.events.get(&Some(room_name.clone())) {
-                Some(room_events_map) => match room_events_map.get(&event_name) {
-                    None => self.events.get_default_event(&event_name),
-                    some_callback => some_callback,
-                },
-                None => self.events.get_default_event(&event_name),
-            },
-        };
-
-        match callback {
-            Some(function) => {
-                let future = function(self.clone(), payload, emiter);
-                tokio::spawn(async move { future.await });
-            }
-
-            None => {}
-        }
-    }
-
-    pub async fn connect_room(self: &Arc<Room>, room: Arc<Room>) {
-        self.room_senders
-            .write()
-            .await
-            .insert(room.name.clone(), room.sender.clone());
+    fn call(self: &Arc<Room>, event_name: &str, value: Value, emiter: protocol::Emiter) {
+        tokio::spawn(self.get_event(event_name)(self.clone(), value, emiter));
     }
 
     ///Runner////
@@ -249,7 +215,7 @@ impl Room {
                 match received_message {
                     Some(room_command) => match room_command {
                         protocol::Room::Event(event_name, payload, emiter) => {
-                            room.call(event_name, payload, emiter);
+                            room.call(event_name.as_str(), payload, emiter);
                         }
 
                         protocol::Room::ConnectUser(id, user_sender) => {

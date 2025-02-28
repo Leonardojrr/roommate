@@ -1,22 +1,24 @@
 use crate::{
-    data::Data,
-    event::{Callback, EventMap},
+    event::{BoxFut, EventMap},
     protocol,
     room::Room,
 };
+use serde_json::Value;
 use std::{
-    any::{Any, TypeId},
     collections::HashMap,
     marker::{Send, Sync},
     sync::Arc,
 };
-use tokio::sync::{mpsc::unbounded_channel, Mutex, RwLock};
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedSender},
+    Mutex, RwLock,
+};
 
 pub struct RoomBuilder {
     name: Option<String>,
     password: Option<String>,
-    data: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     events: EventMap,
+    room_senders: RwLock<HashMap<String, UnboundedSender<protocol::Room>>>,
 }
 
 impl RoomBuilder {
@@ -24,8 +26,8 @@ impl RoomBuilder {
         Self {
             name: None,
             password: None,
-            data: HashMap::new(),
             events: EventMap::new(),
+            room_senders: RwLock::new(HashMap::new()),
         }
     }
 
@@ -39,35 +41,30 @@ impl RoomBuilder {
         self
     }
 
-    pub fn data<T: 'static>(mut self, data: &Data<T>) -> RoomBuilder
-    where
-        T: Sync + Send,
-    {
-        self.data.insert(data.data_type_id, Box::new(data.clone()));
+    pub fn on(
+        mut self,
+        event_name: &str,
+        event: impl Fn(Arc<Room>, Value, protocol::Emiter) -> BoxFut + Send + Sync + 'static,
+    ) -> RoomBuilder {
+        self.events.insert(event_name.to_string(), Box::new(event));
         self
     }
 
-    pub fn event(mut self, event: (String, Callback)) -> RoomBuilder {
-        self.events.insert(event.0, event.1);
-        self
-    }
+    pub async fn connect_room(self, room: Arc<Room>) -> RoomBuilder {
+        self.room_senders
+            .write()
+            .await
+            .insert(room.name.clone(), room.sender.clone());
 
-    pub fn events(mut self, eventmap: EventMap) -> RoomBuilder {
-        self.events.insert_eventmap(eventmap);
         self
     }
 
     pub fn build(self) -> Arc<Room> {
         let name = self.name.unwrap_or_default();
-
         let password = self.password;
-
-        let data = self.data;
-
         let events = self.events;
-
+        let room_senders = self.room_senders;
         let user_senders = RwLock::new(HashMap::new());
-        let room_senders = RwLock::new(HashMap::new());
 
         let (sender, receiver) = unbounded_channel::<protocol::Room>();
         let receiver = Mutex::new(receiver);
@@ -75,7 +72,6 @@ impl RoomBuilder {
         Arc::new(Room {
             name,
             password,
-            data,
             events,
             sender,
             receiver,

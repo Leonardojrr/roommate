@@ -3,17 +3,16 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
-use tokio::sync::RwLock;
 
 pub struct Data<T> {
     pub data_type_id: TypeId,
-    pub inner_data: Arc<RwLock<T>>,
+    pub inner_data: Arc<T>,
 }
 
 impl<T: 'static> Data<T> {
     pub fn new(data: T) -> Self {
         let data_type_id = data.type_id();
-        let inner_data = Arc::new(RwLock::new(data));
+        let inner_data = Arc::new(data);
 
         Self {
             data_type_id,
@@ -32,7 +31,7 @@ impl<T> Clone for Data<T> {
 }
 
 impl<T> Deref for Data<T> {
-    type Target = Arc<RwLock<T>>;
+    type Target = Arc<T>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner_data

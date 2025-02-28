@@ -8,7 +8,7 @@ use tokio::{
 };
 use tokio_tungstenite::accept_async;
 
-pub struct SocketListener<A: ToSocketAddrs + Send + Sync + 'static> {
+pub struct SocketListener<A: ToSocketAddrs + Send + Sync> {
     pub addr: A,
     pub room_channels: Arc<HashMap<String, UnboundedSender<Room>>>,
 }
