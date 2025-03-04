@@ -14,8 +14,7 @@ use tokio::{
 use uuid::Uuid;
 
 pub struct Room {
-    pub name: String,
-    pub password: Option<String>,
+    pub namespace: String,
     pub events: EventMap,
     pub user_senders: RwLock<HashMap<Uuid, UnboundedSender<protocol::User>>>,
     pub room_senders: RwLock<HashMap<String, UnboundedSender<protocol::Room>>>,
@@ -36,7 +35,7 @@ impl Room {
 
                 let room_sender = room_senders.get(&room_name).unwrap();
 
-                let new_emiter = protocol::Emiter::Room(self.name.clone());
+                let new_emiter = protocol::Emiter::Room(self.namespace.clone());
                 let _ = room_sender.send(protocol::Room::Event(event.into(), payload, new_emiter));
             }
 
@@ -96,7 +95,7 @@ impl Room {
         let event: String = event.into();
         let room_senders = self.room_senders.read().await;
 
-        let new_emiter = protocol::Emiter::Room(self.name.clone());
+        let new_emiter = protocol::Emiter::Room(self.namespace.clone());
         let room_command = protocol::Room::Event(event, payload, new_emiter);
 
         match emiter {
@@ -121,7 +120,7 @@ impl Room {
         let event: String = event.into();
         let room_senders = self.room_senders.read().await;
 
-        let new_emiter = protocol::Emiter::Room(self.name.clone());
+        let new_emiter = protocol::Emiter::Room(self.namespace.clone());
         let room_command = protocol::Room::Event(event, payload, new_emiter);
 
         for (_, sender) in room_senders.iter() {
@@ -148,7 +147,7 @@ impl Room {
                     let room_command = protocol::Room::Event(
                         event.clone(),
                         payload.clone(),
-                        protocol::Emiter::Room(self.name.clone()),
+                        protocol::Emiter::Room(self.namespace.clone()),
                     );
                     let _ = sender.send(room_command);
                 }
@@ -163,7 +162,7 @@ impl Room {
                     let room_command = protocol::Room::Event(
                         event.clone(),
                         payload.clone(),
-                        protocol::Emiter::Room(self.name.clone()),
+                        protocol::Emiter::Room(self.namespace.clone()),
                     );
                     let _ = sender.send(room_command);
                 }
@@ -184,7 +183,7 @@ impl Room {
             let room_command = protocol::Room::Event(
                 event.clone(),
                 payload.clone(),
-                protocol::Emiter::Room(self.name.clone()),
+                protocol::Emiter::Room(self.namespace.clone()),
             );
             let _ = sender.send(room_command);
         }

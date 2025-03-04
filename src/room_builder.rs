@@ -15,8 +15,7 @@ use tokio::sync::{
 };
 
 pub struct RoomBuilder {
-    name: Option<String>,
-    password: Option<String>,
+    namespace: Option<String>,
     events: EventMap,
     room_senders: RwLock<HashMap<String, UnboundedSender<protocol::Room>>>,
 }
@@ -24,20 +23,14 @@ pub struct RoomBuilder {
 impl RoomBuilder {
     pub fn new() -> Self {
         Self {
-            name: None,
-            password: None,
+            namespace: None,
             events: EventMap::new(),
             room_senders: RwLock::new(HashMap::new()),
         }
     }
 
-    pub fn name(mut self, name: &str) -> RoomBuilder {
-        self.name = Some(String::from(name));
-        self
-    }
-
-    pub fn password(mut self, password: &str) -> RoomBuilder {
-        self.password = Some(String::from(password));
+    pub fn namespace(mut self, namespace: &str) -> RoomBuilder {
+        self.namespace = Some(String::from(namespace));
         self
     }
 
@@ -54,14 +47,13 @@ impl RoomBuilder {
         self.room_senders
             .write()
             .await
-            .insert(room.name.clone(), room.sender.clone());
+            .insert(room.namespace.clone(), room.sender.clone());
 
         self
     }
 
     pub fn build(self) -> Arc<Room> {
-        let name = self.name.unwrap_or_default();
-        let password = self.password;
+        let namespace = self.namespace.unwrap_or_default();
         let events = self.events;
         let room_senders = self.room_senders;
         let user_senders = RwLock::new(HashMap::new());
@@ -70,8 +62,7 @@ impl RoomBuilder {
         let receiver = Mutex::new(receiver);
 
         Arc::new(Room {
-            name,
-            password,
+            namespace,
             events,
             sender,
             receiver,

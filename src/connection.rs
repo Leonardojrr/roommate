@@ -33,7 +33,6 @@ impl<A: ToSocketAddrs + Send + Sync + 'static> SocketListener<A> {
 
             loop {
                 let (stream, _) = connection_listener.accept().await.unwrap();
-
                 let result = accept_async(stream).await;
 
                 match result {
